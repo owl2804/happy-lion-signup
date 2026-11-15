@@ -1,0 +1,384 @@
+<!doctype html>
+<html lang="zh-Hant">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>樂獅活動報名</title>
+<style>
+  :root {
+    --red: #d6262b; --red-dark: #a91d21; --ink: #222; --muted: #6b6b6b; --line: #e6e2dc;
+    --bg: #faf7f2; --card: #fff; --green: #1f8a4c; --orange: #d97706; --yellow: #b58900;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink);
+         font: 16px/1.6 -apple-system, "PingFang TC", "Noto Sans TC", "Microsoft JhengHei", sans-serif; }
+  header { background: var(--red); color: #fff; padding: 14px 16px 0; position: sticky; top: 0; z-index: 5; }
+  header h1 { margin: 0 0 10px; font-size: 19px; letter-spacing: .5px; }
+  nav { display: flex; gap: 4px; }
+  nav button { flex: 1; border: 0; background: transparent; color: #ffd9d9; padding: 10px 0 12px;
+               font-size: 15px; border-bottom: 3px solid transparent; }
+  nav button.on { color: #fff; border-bottom-color: #fff; font-weight: 700; }
+  main { padding: 16px; max-width: 560px; margin: 0 auto; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 16px; margin-bottom: 14px; }
+  .card h2 { margin: 0 0 6px; font-size: 18px; }
+  .meta { color: var(--muted); font-size: 14px; margin: 2px 0; }
+  .tag { display: inline-block; font-size: 13px; padding: 1px 8px; border-radius: 99px; background: #f1ece4; margin-right: 6px; }
+  .tag.full { background: #fde8e8; color: var(--red-dark); }
+  .btn { display: block; width: 100%; border: 0; border-radius: 10px; background: var(--red); color: #fff;
+         font-size: 17px; font-weight: 700; padding: 13px; margin-top: 12px; }
+  .btn:disabled { background: #c9c3bb; }
+  .btn.ghost { background: transparent; color: var(--red); border: 1.5px solid var(--red); }
+  .btn.small { display: inline-block; width: auto; font-size: 14px; padding: 6px 14px; margin: 8px 0 0; }
+  label.field { display: block; margin: 12px 0 4px; font-weight: 600; font-size: 15px; }
+  input[type=text], input[type=tel], select, textarea {
+    width: 100%; font-size: 16px; padding: 11px 12px; border: 1px solid #cfc8bf; border-radius: 8px; background: #fff; }
+  .check { display: flex; gap: 10px; align-items: flex-start; padding: 10px 0; border-top: 1px solid var(--line); }
+  .check:first-of-type { border-top: 0; }
+  .check input { width: 22px; height: 22px; margin-top: 2px; flex: none; }
+  .note { font-size: 14px; color: var(--muted); }
+  .status { font-weight: 700; }
+  .s-待確認 { color: var(--orange); } .s-已確認 { color: var(--green); } .s-候補 { color: var(--yellow); }
+  .s-已取消 { color: #999; text-decoration: line-through; }
+  .msg { padding: 12px 14px; border-radius: 10px; margin-bottom: 14px; font-size: 15px; }
+  .msg.err { background: #fde8e8; color: var(--red-dark); }
+  .msg.ok { background: #e6f4ec; color: var(--green); }
+  .center { text-align: center; color: var(--muted); padding: 40px 0; }
+  .link { background: none; border: 0; color: var(--red); text-decoration: underline; font-size: 15px; padding: 0; }
+  details { margin-top: 8px; } summary { color: var(--muted); font-size: 14px; }
+  .mock { background: #fff3cd; color: #7a5b00; font-size: 13px; text-align: center; padding: 4px; }
+</style>
+</head>
+<body>
+<div id="mockBar" class="mock" hidden>預覽模式：使用假資料，不會連到 LINE 或試算表</div>
+<header>
+  <h1>樂獅英語｜活動報名</h1>
+  <nav>
+    <button data-tab="activities" class="on">活動報名</button>
+    <button data-tab="mine">我的報名</button>
+    <button data-tab="bind">綁定孩子</button>
+  </nav>
+</header>
+<main id="app"><div class="center">載入中…</div></main>
+
+<script src="https://static.line-scdn.net/liff/edge/2/sdk.js"></script>
+<script>
+// ===== 設定（第 3 步部署後填入） =====
+var CONFIG = {
+  LIFF_ID: '請填入LIFF_ID',
+  API_URL: '請填入Apps_Script網頁應用程式網址',
+  PRIVACY: '報名資料（孩子姓名、年級、家長稱呼與手機）只用於本次活動聯繫、名額安排與收費，由樂獅英語各分校保管，不會提供給其他單位。'
+};
+
+var params = new URLSearchParams(location.search);
+var MOCK = params.get('mock') === '1';
+var BRANCH = '', DEEP_ACTIVITY = ''; // LINE 開啟時網址參數要等 liff.init 完成後才讀得到，所以在 boot() 裡設定
+var state = { me: null, activities: [], tab: 'activities' };
+var app = document.getElementById('app');
+
+// ===== 畫面小工具（全部用 textContent，避免資料裡的字被當成程式） =====
+function el(tag, attrs, children) {
+  var n = document.createElement(tag);
+  Object.keys(attrs || {}).forEach(function (k) {
+    if (k === 'text') n.textContent = attrs[k];
+    else if (k === 'class') n.className = attrs[k];
+    else if (k.indexOf('on') === 0) n.addEventListener(k.slice(2), attrs[k]);
+    else if (attrs[k] !== false && attrs[k] != null) n.setAttribute(k, attrs[k] === true ? '' : attrs[k]);
+  });
+  (children || []).forEach(function (c) { if (c) n.appendChild(typeof c === 'string' ? document.createTextNode(c) : c); });
+  return n;
+}
+function render(nodes) { app.innerHTML = ''; nodes.forEach(function (n) { if (n) app.appendChild(n); }); window.scrollTo(0, 0); }
+function message(text, kind) { return el('div', { class: 'msg ' + (kind || 'err'), text: text }); }
+function loading(text) { render([el('div', { class: 'center', text: text || '處理中…' })]); }
+function statusSpan(s) { return el('span', { class: 'status s-' + s, text: s }); }
+
+// ===== 跟 Apps Script 溝通 =====
+function api(action, data) {
+  var body = Object.assign({ action: action }, data || {});
+  if (MOCK) return mockApi(body);
+  body.idToken = liff.getIDToken();
+  return fetch(CONFIG.API_URL, {
+    method: 'POST',
+    headers: { 'Content-Type': 'text/plain;charset=utf-8' }, // 用純文字格式，避免瀏覽器多做一次跨網域檢查
+    body: JSON.stringify(body)
+  }).then(function (r) { return r.json(); })
+    .catch(function () { return { ok: false, message: '網路不穩，請稍後再試' }; });
+}
+
+// ===== 啟動 =====
+function start() {
+  if (MOCK) { document.getElementById('mockBar').hidden = false; return boot(); }
+  liff.init({ liffId: CONFIG.LIFF_ID }).then(function () {
+    if (!liff.isLoggedIn()) { liff.login({ redirectUri: location.href }); return; }
+    boot();
+  }).catch(function () {
+    render([message('報名頁開啟失敗，請關掉後從 LINE 重新打開')]);
+  });
+}
+
+function boot() {
+  var p = new URLSearchParams(location.search);
+  BRANCH = p.get('branch') || '';
+  DEEP_ACTIVITY = p.get('activity') || '';
+  loading('載入中…');
+  api('me').then(function (me) {
+    if (!me.ok) return render([message(me.message)]);
+    state.me = me;
+    if (!me.children.length) return showTab('bind');
+    showTab('activities');
+  });
+}
+
+document.querySelectorAll('nav button').forEach(function (b) {
+  b.addEventListener('click', function () { showTab(b.dataset.tab); });
+});
+
+function showTab(tab) {
+  state.tab = tab;
+  document.querySelectorAll('nav button').forEach(function (b) { b.classList.toggle('on', b.dataset.tab === tab); });
+  if (tab === 'activities') return loadActivities();
+  if (tab === 'mine') return loadMine();
+  if (tab === 'bind') return showBind();
+}
+
+// ===== 活動列表 =====
+function loadActivities() {
+  loading('載入活動…');
+  api('activities', { branch: BRANCH }).then(function (res) {
+    if (!res.ok) return render([message(res.message)]);
+    state.activities = res.activities;
+    if (DEEP_ACTIVITY) {
+      var a = res.activities.filter(function (x) { return x.activityId === DEEP_ACTIVITY; })[0];
+      DEEP_ACTIVITY = '';
+      if (a) return showActivity(a);
+    }
+    var nodes = [];
+    if (state.me.pendingBinds) nodes.push(message('您有 ' + state.me.pendingBinds + ' 筆孩子綁定正在等分校核對，核對好就能報名。', 'ok'));
+    if (!res.activities.length) nodes.push(el('div', { class: 'center', text: '目前沒有開放報名的活動' }));
+    res.activities.forEach(function (a) {
+      nodes.push(el('div', { class: 'card' }, [
+        el('h2', { text: a.name }),
+        el('div', {}, [el('span', { class: 'tag', text: a.branch }), a.full ? el('span', { class: 'tag full', text: '額滿，可登記候補' }) : null]),
+        el('p', { class: 'meta', text: '日期：' + a.start + (a.end && a.end !== a.start ? ' ～ ' + a.end : '') }),
+        a.time ? el('p', { class: 'meta', text: '時段：' + a.time }) : null,
+        a.deadline && a.deadline !== '待填' ? el('p', { class: 'meta', text: '報名截止：' + a.deadline }) : null,
+        el('button', { class: 'btn', text: '看詳情／報名', onclick: function () { showActivity(a); } })
+      ]));
+    });
+    if (!state.me.children.length) nodes.unshift(message('還沒綁定孩子。在校生請先到「綁定孩子」；不是在校生可以在活動裡選「新朋友報名」。', 'ok'));
+    render(nodes);
+  });
+}
+
+// ===== 活動詳情＋報名 =====
+function showActivity(a) {
+  var boxes = [];
+  var kids = a.children.map(function (c) {
+    var disabled = !c.eligible || !!c.registered;
+    var box = el('input', { type: 'checkbox', value: c.studentId, disabled: disabled });
+    if (!disabled) boxes.push(box);
+    var why = c.registered ? '（已報名：' + c.registered + '）' : (!c.eligible ? '（年級不符合）' : '');
+    return el('label', { class: 'check' }, [box, el('span', {}, [c.name, why ? el('span', { class: 'note', text: ' ' + why }) : null])]);
+  });
+  var remark = el('textarea', { rows: 2, placeholder: '想告訴老師的事（選填）', maxlength: 50 });
+  var agree = el('input', { type: 'checkbox' });
+  var submit = el('button', { class: 'btn', text: a.full ? '登記候補' : '送出報名' });
+  var err = el('div');
+
+  submit.addEventListener('click', function () {
+    var ids = boxes.filter(function (b) { return b.checked; }).map(function (b) { return b.value; });
+    err.innerHTML = '';
+    if (!ids.length) return err.appendChild(message('請勾選要報名的孩子'));
+    if (!agree.checked) return err.appendChild(message('請勾選同意個資說明'));
+    submit.disabled = true; submit.textContent = '送出中…';
+    api('register', { activityId: a.activityId, studentIds: ids, answers: remark.value ? { 家長備註: remark.value } : null })
+      .then(function (res) { showResult(a, res); });
+  });
+
+  render([
+    el('button', { class: 'link', text: '‹ 回活動列表', onclick: function () { showTab('activities'); } }),
+    el('div', { class: 'card', style: 'margin-top:10px' }, [
+      el('h2', { text: a.name }),
+      el('p', { class: 'meta', text: '分校：' + a.branch }),
+      el('p', { class: 'meta', text: '日期：' + a.start + (a.end && a.end !== a.start ? ' ～ ' + a.end : '') }),
+      a.time ? el('p', { class: 'meta', text: '時段：' + a.time }) : null,
+      a.place ? el('p', { class: 'meta', text: '地點：' + a.place }) : null,
+      a.fee ? el('p', { class: 'meta', text: '費用：' + a.fee }) : null,
+      a.capacity ? el('p', { class: 'meta', text: '名額：' + a.capacity + '（剩 ' + a.remaining + '）' }) : null,
+      a.cancelRule && a.cancelRule !== '待填' ? el('p', { class: 'meta', text: '取消規則：' + a.cancelRule }) : null
+    ]),
+    a.children.length ? el('div', { class: 'card' }, [el('h2', { text: '要報名的孩子' })].concat(kids).concat([remark])) : null,
+    a.children.length ? el('div', { class: 'card' }, [
+      el('label', { class: 'check' }, [agree, el('span', { class: 'note', text: CONFIG.PRIVACY })]),
+      err, submit
+    ]) : null,
+    a.openToNew ? el('div', { class: 'card' }, [
+      el('p', { class: 'note', text: a.children.length ? '要幫還不是樂獅學生的孩子報名？' : '還不是樂獅學生嗎？歡迎用新朋友報名。' }),
+      el('button', { class: 'btn ghost', text: '新朋友報名', onclick: function () { showNewFriend(a); } })
+    ]) : null,
+    !a.children.length && !a.openToNew ? message('這場活動限在校生報名，請先到「綁定孩子」。', 'ok') : null
+  ]);
+}
+
+function showResult(a, res) {
+  if (!res.ok) return render([message(res.message), el('button', { class: 'btn ghost', text: '回活動列表', onclick: function () { showTab('activities'); } })]);
+  var rows = res.results.map(function (r) {
+    return el('div', { class: 'check' }, [el('span', {}, [
+      el('strong', { text: (r.name || '') + '：' }),
+      r.ok ? statusSpan(r.duplicate ? r.status : r.status) : null,
+      el('div', { class: 'note', text: r.message })
+    ])]);
+  });
+  render([
+    message('已收到！以下是報名結果', 'ok'),
+    el('div', { class: 'card' }, [el('h2', { text: res.activityName })].concat(rows).concat([
+      el('p', { class: 'note', text: '「待確認」表示分校老師核對後會再通知您。可以在「我的報名」隨時查看。' })
+    ])),
+    el('button', { class: 'btn', text: '看我的報名', onclick: function () { showTab('mine'); } }),
+    !MOCK && liff.isInClient() ? el('button', { class: 'btn ghost', text: '關閉', onclick: function () { liff.closeWindow(); } }) : null
+  ]);
+}
+
+// ===== 新朋友報名 =====
+function showNewFriend(a) {
+  var f = {
+    childName: el('input', { type: 'text', maxlength: 20 }),
+    grade: el('select', {}, ['請選擇', '幼兒園', '小一', '小二', '小三', '小四', '小五', '小六', '國一', '國二', '國三', '高中']
+      .map(function (g, i) { return el('option', { value: i ? g : '', text: g }); })),
+    school: el('input', { type: 'text', maxlength: 30 }),
+    parentName: el('input', { type: 'text', maxlength: 20, placeholder: '例如：王媽媽' }),
+    phone: el('input', { type: 'tel', maxlength: 15, placeholder: '09xx-xxx-xxx' })
+  };
+  var agree = el('input', { type: 'checkbox' });
+  var err = el('div');
+  var submit = el('button', { class: 'btn', text: '送出報名' });
+  submit.addEventListener('click', function () {
+    err.innerHTML = '';
+    if (!f.childName.value.trim() || !f.grade.value || !f.parentName.value.trim() || f.phone.value.replace(/\D/g, '').length < 8)
+      return err.appendChild(message('請填寫孩子姓名、年級、家長稱呼與手機'));
+    if (!agree.checked) return err.appendChild(message('請勾選同意個資說明'));
+    submit.disabled = true; submit.textContent = '送出中…';
+    api('registerNew', { activityId: a.activityId, childName: f.childName.value, grade: f.grade.value,
+      school: f.school.value, parentName: f.parentName.value, phone: f.phone.value }).then(function (res) { showResult(a, res); });
+  });
+  render([
+    el('button', { class: 'link', text: '‹ 回活動', onclick: function () { showActivity(a); } }),
+    el('div', { class: 'card', style: 'margin-top:10px' }, [
+      el('h2', { text: '新朋友報名：' + a.name }),
+      el('label', { class: 'field', text: '孩子姓名' }), f.childName,
+      el('label', { class: 'field', text: '年級' }), f.grade,
+      el('label', { class: 'field', text: '就讀學校（選填）' }), f.school,
+      el('label', { class: 'field', text: '家長稱呼' }), f.parentName,
+      el('label', { class: 'field', text: '家長手機' }), f.phone
+    ]),
+    el('div', { class: 'card' }, [el('label', { class: 'check' }, [agree, el('span', { class: 'note', text: CONFIG.PRIVACY })]), err, submit])
+  ]);
+}
+
+// ===== 我的報名 =====
+function loadMine() {
+  loading('載入報名紀錄…');
+  api('myRegistrations').then(function (res) {
+    if (!res.ok) return render([message(res.message)]);
+    if (!res.registrations.length) return render([el('div', { class: 'center', text: '目前沒有報名紀錄' })]);
+    render(res.registrations.slice().reverse().map(function (r) {
+      var cancel = r.status === '已確認' ? el('p', { class: 'note', text: '如需取消，請直接聯絡分校（涉及繳費與退費）' })
+        : r.status !== '已取消' ? el('button', { class: 'btn ghost small', text: '取消報名', onclick: function () {
+        if (!confirm('確定要取消「' + r.studentName + '」的「' + r.activityName + '」報名嗎？')) return;
+        loading('取消中…');
+        api('cancel', { registrationId: r.registrationId }).then(function (c) {
+          if (!c.ok) { alert(c.message); }
+          loadMine();
+        });
+      } }) : null;
+      return el('div', { class: 'card' }, [
+        el('h2', { text: r.activityName }),
+        el('p', {}, [r.studentName + '　', statusSpan(r.status), r.waitlist ? el('span', { class: 'note', text: '（候補第 ' + r.waitlist + ' 位）' }) : null]),
+        el('p', { class: 'meta', text: '繳費：' + (r.payment || '—') + '　送出：' + r.submittedAt }),
+        cancel
+      ]);
+    }));
+  });
+}
+
+// ===== 綁定孩子 =====
+function showBind() {
+  var f = {
+    childName: el('input', { type: 'text', maxlength: 20, placeholder: '孩子的中文全名' }),
+    parentName: el('input', { type: 'text', maxlength: 20, placeholder: '例如：王媽媽' }),
+    relation: el('select', {}, ['母親', '父親', '其他家人'].map(function (r) { return el('option', { value: r, text: r }); })),
+    phone: el('input', { type: 'tel', maxlength: 15, placeholder: '留給分校的手機號碼' })
+  };
+  var err = el('div');
+  var submit = el('button', { class: 'btn', text: '送出綁定' });
+  submit.addEventListener('click', function () {
+    err.innerHTML = '';
+    if (!f.childName.value.trim() || !f.parentName.value.trim() || f.phone.value.replace(/\D/g, '').length < 8)
+      return err.appendChild(message('請填寫孩子姓名、家長稱呼與手機'));
+    submit.disabled = true; submit.textContent = '送出中…';
+    api('bind', { childName: f.childName.value, parentName: f.parentName.value, relation: f.relation.value, phone: f.phone.value })
+      .then(function (res) {
+        if (!res.ok) { submit.disabled = false; submit.textContent = '送出綁定'; return err.appendChild(message(res.message)); }
+        return api('me').then(function (me) {
+          if (me.ok) state.me = me;
+          render([message(res.message, 'ok'),
+            el('button', { class: 'btn', text: '去報名活動', onclick: function () { showTab('activities'); } }),
+            el('button', { class: 'btn ghost', text: '再綁定一位孩子', onclick: showBind })]);
+        });
+      });
+  });
+  var kids = state.me && state.me.children.length
+    ? el('div', { class: 'card' }, [el('h2', { text: '已綁定的孩子' })].concat(state.me.children.map(function (c) {
+        return el('p', { class: 'meta', text: '✓ ' + c.name + '（' + c.grade + '）' });
+      })))
+    : message('第一次使用，請先綁定您的孩子（只要做一次）。兄弟姊妹請一位一位綁定。', 'ok');
+  render([kids, el('div', { class: 'card' }, [
+    el('h2', { text: '綁定孩子' }),
+    el('p', { class: 'note', text: '請填寫留給分校的手機號碼，系統會自動比對；比對不到時會請分校老師幫您核對。' }),
+    el('label', { class: 'field', text: '孩子姓名' }), f.childName,
+    el('label', { class: 'field', text: '家長稱呼' }), f.parentName,
+    el('label', { class: 'field', text: '關係' }), f.relation,
+    el('label', { class: 'field', text: '家長手機' }), f.phone,
+    err, submit
+  ])]);
+}
+
+// ===== 預覽模式用的假資料（?mock=1 才會用到） =====
+function mockApi(req) {
+  var db = window.__mock || (window.__mock = {
+    children: [{ studentId: 'ER-S001', name: '測試學生甲', grade: '小五' }, { studentId: 'ER-S002', name: '測試學生乙', grade: '小六' }],
+    regs: [{ registrationId: 'R0001', activityId: 'ER-2701', activityName: '【測試】寒假英檢衝刺班', studentName: '測試學生甲', status: '已確認', waitlist: '', payment: '已繳', submittedAt: '2026/11/15 10:01' }]
+  });
+  if (params.get('new') === '1' && !db.cleared) { db.children = []; db.regs = []; db.cleared = true; }
+  var r;
+  switch (req.action) {
+    case 'me': r = { ok: true, parentName: '測試媽媽', children: db.children, pendingBinds: 0 }; break;
+    case 'activities': r = { ok: true, activities: [{
+      activityId: 'ER-2701', branch: '二重', type: 'GEPT初級', name: '【測試】寒假英檢衝刺班', start: '2027/1/25', end: '2027/2/15',
+      time: '每週一 19:00-21:00（共4堂）', deadline: '2027/1/18', place: '二重分校', fee: '請洽櫃台', cancelRule: '開課前 3 天可全額退費',
+      openToNew: true, capacity: 12, remaining: 3, full: false,
+      children: db.children.map(function (c) {
+        var reg = db.regs.filter(function (x) { return x.studentName === c.name && x.status !== '已取消'; })[0];
+        return { studentId: c.studentId, name: c.name, eligible: true, registered: reg ? reg.status : '' };
+      }) }] }; break;
+    case 'register': r = { ok: true, activityName: '【測試】寒假英檢衝刺班', results: req.studentIds.map(function (id) {
+      var c = db.children.filter(function (x) { return x.studentId === id; })[0];
+      db.regs.push({ registrationId: 'R' + (db.regs.length + 9), activityName: '【測試】寒假英檢衝刺班', studentName: c.name, status: '待確認', waitlist: '', payment: '未繳', submittedAt: '剛剛' });
+      return { studentId: id, name: c.name, ok: true, status: '待確認', message: '報名已送出，等分校確認' };
+    }) }; break;
+    case 'registerNew':
+      db.children.push({ studentId: 'ER-N009', name: req.childName, grade: req.grade });
+      db.regs.push({ registrationId: 'R0099', activityName: '【測試】寒假英檢衝刺班', studentName: req.childName, status: '候補', waitlist: 2, payment: '未繳', submittedAt: '剛剛' });
+      r = { ok: true, activityName: '【測試】寒假英檢衝刺班', results: [{ name: req.childName, ok: true, status: '候補', waitlist: 2, message: '名額已滿，已登記候補第 2 位' }] }; break;
+    case 'myRegistrations': r = { ok: true, registrations: db.regs }; break;
+    case 'cancel': db.regs.forEach(function (x) { if (x.registrationId === req.registrationId) x.status = '已取消'; }); r = { ok: true, message: '已取消報名' }; break;
+    case 'bind': db.children.push({ studentId: 'ER-S00' + (db.children.length + 3), name: req.childName, grade: '國一' });
+      r = { ok: true, status: '已綁定', message: '綁定成功：' + req.childName }; break;
+  }
+  return new Promise(function (ok) { setTimeout(function () { ok(r); }, 250); });
+}
+
+start();
+</script>
+</body>
+</html>
