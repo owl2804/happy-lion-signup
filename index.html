@@ -145,7 +145,10 @@ function showTab(tab) {
 // ===== 活動列表 =====
 function loadActivities() {
   loading('載入活動…');
-  api('activities', { branch: BRANCH }).then(function (res) {
+  // 每次都重新抓「我的孩子」，剛綁定或新朋友報名完回來，畫面才會是最新的
+  Promise.all([api('me'), api('activities', { branch: BRANCH })]).then(function (both) {
+    var me = both[0], res = both[1];
+    if (me.ok) state.me = me;
     if (!res.ok) return render([message(res.message)]);
     state.activities = res.activities;
     if (DEEP_ACTIVITY) {
@@ -304,6 +307,9 @@ function loadMine() {
 
 // ===== 綁定孩子 =====
 function showBind() {
+  api('me').then(function (me) { if (me.ok) state.me = me; renderBind(); });
+}
+function renderBind() {
   var f = {
     childName: el('input', { type: 'text', maxlength: 20, placeholder: '孩子的中文全名' }),
     parentName: el('input', { type: 'text', maxlength: 20, placeholder: '例如：王媽媽' }),
