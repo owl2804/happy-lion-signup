@@ -233,14 +233,38 @@ function showResult(a, res) {
       el('div', { class: 'note', text: r.message })
     ])]);
   });
+  var chatNote = el('p', { class: 'note', text: '' });
   render([
     message('已收到！以下是報名結果', 'ok'),
     el('div', { class: 'card' }, [el('h2', { text: res.activityName })].concat(rows).concat([
-      el('p', { class: 'note', text: '「待確認」表示分校老師核對後會再通知您。可以在「我的報名」隨時查看。' })
+      el('p', { class: 'note', text: '「待確認」表示分校老師核對中，確認後會改成「已確認」。想看最新狀態：在官方帳號聊天室輸入「查詢」，或點「我的報名」。' }),
+      chatNote
     ])),
     el('button', { class: 'btn', text: '看我的報名', onclick: function () { showTab('mine'); } }),
     !MOCK && liff.isInClient() ? el('button', { class: 'btn ghost', text: '關閉', onclick: function () { liff.closeWindow(); } }) : null
   ]);
+  sendToChat(res).then(function (how) {
+    if (how === 'sent') chatNote.textContent = '📩 確認卡片已傳到 LINE 聊天室。';
+    else if (how === 'mock') chatNote.textContent = '（測試模式：正式版會在聊天室傳出「我已報名 R…」，並收到確認卡片）';
+  });
+}
+
+/** 幫家長在官方帳號聊天室送出「我已報名 R0007」，後台收到後用「回覆」傳確認卡片（回覆不計訊息額度）。
+ *  只有從聊天室（圖文選單）打開報名頁才送得出去；從 QR code 或瀏覽器打開就略過。 */
+function sendToChat(res) {
+  var ids = (res.results || []).filter(function (r) { return r.ok && r.registrationId && !r.duplicate; })
+    .map(function (r) { return r.registrationId; });
+  if (!ids.length) return Promise.resolve('none');
+  if (MOCK) return Promise.resolve('mock');
+  try {
+    var ctx = liff.isInClient() && liff.getContext ? liff.getContext() : null;
+    if (!ctx || ['utou', 'group', 'room'].indexOf(ctx.type) < 0) return Promise.resolve('outside');
+    return liff.sendMessages([{ type: 'text', text: '我已報名 ' + ids.join('、') }])
+      .then(function () { return 'sent'; })
+      .catch(function () { return 'failed'; });
+  } catch (e) {
+    return Promise.resolve('failed');
+  }
 }
 
 // ===== 新朋友報名 =====
@@ -371,12 +395,12 @@ function mockApi(req) {
     case 'register': r = { ok: true, activityName: '【測試】寒假英檢衝刺班', results: req.studentIds.map(function (id) {
       var c = db.children.filter(function (x) { return x.studentId === id; })[0];
       db.regs.push({ registrationId: 'R' + (db.regs.length + 9), activityName: '【測試】寒假英檢衝刺班', studentName: c.name, status: '待確認', waitlist: '', payment: '未繳', submittedAt: '剛剛' });
-      return { studentId: id, name: c.name, ok: true, status: '待確認', message: '報名已送出，等分校確認' };
+      return { studentId: id, name: c.name, ok: true, registrationId: 'R' + (db.regs.length + 8), status: '待確認', message: '報名已送出，等分校確認' };
     }) }; break;
     case 'registerNew':
       db.children.push({ studentId: 'ER-N009', name: req.childName, grade: req.grade });
       db.regs.push({ registrationId: 'R0099', activityName: '【測試】寒假英檢衝刺班', studentName: req.childName, status: '候補', waitlist: 2, payment: '未繳', submittedAt: '剛剛' });
-      r = { ok: true, activityName: '【測試】寒假英檢衝刺班', results: [{ name: req.childName, ok: true, status: '候補', waitlist: 2, message: '名額已滿，已登記候補第 2 位' }] }; break;
+      r = { ok: true, activityName: '【測試】寒假英檢衝刺班', results: [{ name: req.childName, ok: true, registrationId: 'R0099', status: '候補', waitlist: 2, message: '名額已滿，已登記候補第 2 位' }] }; break;
     case 'myRegistrations': r = { ok: true, registrations: db.regs }; break;
     case 'cancel': db.regs.forEach(function (x) { if (x.registrationId === req.registrationId) x.status = '已取消'; }); r = { ok: true, message: '已取消報名' }; break;
     case 'bind': db.children.push({ studentId: 'ER-S00' + (db.children.length + 3), name: req.childName, grade: '國一' });
